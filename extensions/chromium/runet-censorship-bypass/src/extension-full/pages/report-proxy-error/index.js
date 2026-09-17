@@ -1,18 +1,15 @@
 'use strict';
 
-chrome.runtime.getBackgroundPage( (bgWindow) =>
-  bgWindow.apis.errorHandlers.installListenersOn(
-    window, 'PRERR', () => {
+window.bgBridge.connect().then(async (bg) => {
 
-      const params = new URLSearchParams(location.search.substr(1));
-      const requestFailedTo = params.get('requestFailedTo');
-      const fromPageHref = params.get('fromPageHref') || requestFailedTo;
+  const params = new URLSearchParams(location.search.substr(1));
+  const requestFailedTo = params.get('requestFailedTo');
+  const fromPageHref = params.get('fromPageHref') || requestFailedTo;
 
-      const acr = bgWindow.apis.antiCensorRu;
-      const pacKey = acr.getCurrentPacProviderKey();
-      const pacModTime = acr.getLastModifiedForKey(pacKey);
+  const pacKey = await bg.apis.antiCensorRu.getCurrentPacProviderKey();
+  const pacModTime = await bg.call('apis.antiCensorRu.getLastModifiedForKey', pacKey);
 
-      const errorReport = `
+  const errorReport = `
 Your proxy blocked the following request:
   * Request was from page: ${fromPageHref}
   * To address: ${requestFailedTo}
@@ -29,11 +26,10 @@ Thank you!
 Я думаю, это произошло по ошибке! Пожалуйста, примите действия для её исправления.
 Спасибо!
       `.trim();
-      errorInfo.innerText = errorReport;
-      document.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
+  document.getElementById('errorInfo').innerText = errorReport;
+  document.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
 
-        a.href = `${a.href}?subject=${encodeURIComponent(new URL(requestFailedTo).hostname)} TUNNEL_CONNECTION_FAILED&body=${encodeURIComponent(errorReport)}`;
-      });
-    },
-  ),
-);
+    a.href = `${a.href}?subject=${encodeURIComponent(new URL(requestFailedTo).hostname)} TUNNEL_CONNECTION_FAILED&body=${encodeURIComponent(errorReport)}`;
+  });
+
+});

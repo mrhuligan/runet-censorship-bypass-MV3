@@ -12,56 +12,19 @@
   const ifIncontinence = 'if-incontinence';
   const modsKey = 'mods';
 
+  /*
+    MV3 removed webRequestBlocking, so chrome.webRequest.onAuthRequired can
+    no longer supply proxy credentials synchronously. The workaround is to
+    embed the credentials directly into the PAC-returned proxy string:
+
+      HTTPS user:pass@host:port
+
+    Chromium honours credentials embedded in the PAC result for HTTP/HTTPS
+    proxies. This is why proxyHostToCredsList is now used while COOKING the
+    PAC script instead of while answering onAuthRequired.
+  */
   let proxyHostToCredsList = {};
-  const ifAuthSupported = chrome.webRequest && chrome.webRequest.onAuthRequired && !window.apis.version.ifMini;
-  if (ifAuthSupported) {
-
-    const requestIdToTries = {};
-
-    chrome.webRequest.onAuthRequired.addListener(
-      (details) => {
-
-        if (!details.isProxy) {
-          return {};
-        }
-
-        const proxyHost = `${details.challenger.host}:${details.challenger.port}`;
-        const credsList = proxyHostToCredsList[proxyHost];
-        if (!credsList) {
-          return {}; // No creds found for this proxy.
-        }
-        const requestId = details.requestId;
-        const tries = requestIdToTries[requestId] || 0;
-        if (tries > credsList.length) {
-          return {}; // All creds for this proxy were tried already.
-        }
-        requestIdToTries[requestId] = tries + 1;
-        return {
-          authCredentials: credsList[tries],
-        };
-
-      },
-      {urls: ['<all_urls>']},
-      ['blocking'],
-    );
-
-    const forgetRequestId = (details) => {
-
-      delete requestIdToTries[details.requestId];
-
-    };
-
-    chrome.webRequest.onCompleted.addListener(
-      forgetRequestId,
-      {urls: ['<all_urls>']},
-    );
-
-    chrome.webRequest.onErrorOccurred.addListener(
-      forgetRequestId,
-      {urls: ['<all_urls>']},
-    );
-
-  }
+  const ifAuthSupported = true; // Kept as a flag: PAC-embedded creds always work now.
 
   const getDefaultConfigs = () => ({// Configs user may mutate them and we don't care!
 
@@ -110,6 +73,13 @@
       label: 'использовать WARP как прокси',
       desc: 'Использовать СВОЙ локальный CloudFlare WARP (<a href="https://one.one.one.one">https://one.one.one.one</a>) в качестве прокси.',
       order: 5.5,
+    },
+    ifUseYouboost: {
+      dflt: false,
+      category: 'ownProxies',
+      label: 'Использовать прокси YouBoost',
+      desc: 'Позволяет получить и использовать прокси расширения YouBoost. При включении расширение создаёт бесплатный пробный доступ на сайте YouBoost и автоматически подставляет полученный прокси (HTTP, без авторизации, поддерживает HTTPS). Прокси используется до первой ошибки, после чего запрашивается новый.',
+      order: 5.7,
     },
     exceptions: {
       dflt: null,
@@ -195,7 +165,7 @@
 
   };
 
-  const getOrderedConfigsForUser = function getOrderedConfigs(category) {
+  const getOrderedConfigsForUser = function getOrderedConfigsForUser(category) {
 
     const pacMods = getCurrentConfigs();
     const configs = getDefaultConfigs();
@@ -215,6 +185,26 @@
         return arr;
 
       }, []);
+
+  };
+
+  /*
+    MV3-safe credential embedding.
+
+    Chromium accepts the "user:pass@" form inside the PAC proxy string. We
+    keep the original scheme for the UI but emit a creded string for the
+    cooked PAC.
+  */
+  const credifyProxyString = (proxyScheme) => {
+
+    if (!proxyScheme.includes('@')) {
+      return proxyScheme;
+    }
+    const proxy = window.utils.parseProxyScheme(proxyScheme);
+    if (!proxy.creds) {
+      return proxyScheme;
+    }
+    return `${proxy.type} ${proxy.creds}@${proxy.hostname}:${proxy.port}`;
 
   };
 
@@ -260,8 +250,26 @@
       self.torPoints = ['SOCKS5 localhost:9150', 'SOCKS5 localhost:9050'];
       customProxyArray.push(...self.torPoints);
     }
+    if (self.ifUseYouboost) {
+      /*
+        YouBoost proxy is fetched asynchronously by 40-youboost-api.js and
+        cached. Cooking is synchronous, so we only read the cached string
+        here; the alarm in 37-sync-pac... keeps the cache warm.
+      */
+      const youboostProxy = window.apis.youboost &&
+        window.apis.youboost.getCachedProxyString();
+      if (youboostProxy) {
+        self.youboostPoints = [youboostProxy];
+        customProxyArray.push(youboostProxy);
+      } else {
+        self.youboostPoints = [];
+      }
+    }
 
-    // Hanlde protected proxies in customProxyArray.
+    /*
+      Credentials stay in the string returned to the PAC script; the host
+      list is also recorded so the ip-to-host resolver knows where to look.
+    */
     const protectedProxies = [];
     customProxyArray = customProxyArray.map((proxyScheme) => {
 
@@ -269,7 +277,8 @@
 
         const proxy = window.utils.parseProxyScheme(proxyScheme);
         protectedProxies.push(proxy);
-        return `${proxy.type} ${proxy.hostname}:${proxy.port}`;
+        // MV3: keep the creds embedded, that is what makes auth work.
+        return credifyProxyString(proxyScheme);
 
       }
       return proxyScheme;
@@ -350,6 +359,30 @@
     getPacMods: getCurrentConfigs,
     getPacModsRaw: () => getCurrentConfigs(true),
     getOrderedConfigs: getOrderedConfigsForUser,
+
+    /* RPC-friendly twins (no callbacks across the process boundary). */
+    getPacModsAsync() {
+
+      return Promise.resolve(getCurrentConfigs());
+
+    },
+
+    getOrderedConfigsAsync(category) {
+
+      return Promise.resolve(getOrderedConfigsForUser(category));
+
+    },
+
+    getDefaultConfigsAsync() {
+
+      const configs = getDefaultConfigs();
+      return Promise.resolve(Object.keys(configs).map((key) => Object.assign({
+        key,
+        value: configs[key].dflt,
+        category: configs[key].category || 'general',
+      }, configs[key])));
+
+    },
 
     cook(pacData, pacMods = mandatory()) {
 
@@ -582,20 +615,29 @@ ${
         details = undefined;
       }
 
-      new Promise((resolve) =>
+      /*
+        MV3: proxy.settings.get()/set() return Promises and reject on error
+        instead of setting runtime.lastError.
+      */
+      new Promise((resolve, reject) => {
 
-        details
-          ? resolve(details)
-          : chrome.proxy.settings.get({}, timeouted(resolve) ),
+        if (details) {
+          resolve(details);
+          return;
+        }
+        chrome.proxy.settings.get({}).then(resolve, reject);
 
-      ).then((details) => {
+      }).then((details) => {
 
         if (
           details && details.levelOfControl === 'controlled_by_this_extension'
         ) {
           const pac = window.utils.getProp(details, 'value.pacScript');
           if (pac && pac.data) {
-            return chrome.proxy.settings.set(details, chromified(cb));
+            return chrome.proxy.settings.set(details).then(
+              () => cb(null, null),
+              (err) => cb(err),
+            );
           }
         }
 
@@ -604,7 +646,17 @@ ${
           'Не найдено активного PAC-скрипта! Изменения будут применены при возвращении контроля настроек прокси или установке нового PAC-скрипта.'
         ));
 
-      });
+      }, (err) => cb(err));
+
+    },
+
+    setNowAsyncPromise(details) {
+
+      return new Promise((resolve, reject) => this.setNowAsync(
+        details, (err, res, ...warns) => err
+          ? reject(Object.assign(err, {warns}))
+          : resolve(Object.assign({res}, {warns})),
+      ));
 
     },
 
@@ -618,17 +670,65 @@ ${
 
     keepCookedNowAsync(pacMods = mandatory(), cb = throwIfError) {
 
-      let ifProxiesChanged = false;
-      let modsWarns = [];
+      /*
+        Read-only shortcut: when no explicit mods are passed, the stored mods
+        are used and there is nothing to prepare. Keeping this branch separate
+        avoids re-entering the YouBoost step below (which used to cause an
+        infinite refresh loop when the API rejected the trial).
+      */
       if (typeof(pacMods) === 'function') {
         cb = pacMods;
-        pacMods = getCurrentConfigs();
-      } else {
-        let modsErr;
-        [modsErr, pacMods, ...modsWarns] = createPacModifiers(pacMods);
-        if (modsErr) {
-          return cb(modsErr, null, modsWarns);
+        return this.keepCookedNowAsync(getCurrentConfigs(), cb);
+      }
+
+      let ifProxiesChanged = false;
+      let modsWarns = [];
+      let modsErr;
+      [modsErr, pacMods, ...modsWarns] = createPacModifiers(pacMods);
+      if (modsErr) {
+        return cb(modsErr, null, modsWarns);
+      }
+
+      /*
+        Turning YouBoost on must have a proxy cached BEFORE cooking, because
+        cooking only reads the cached string synchronously. Fetch happens once
+        and only if nothing is cached (a healthy cached proxy is reused); the
+        watchdog forces a refresh when the proxy actually fails.
+      */
+      if (pacMods.ifUseYouboost && window.apis.youboost) {
+        const ifHasCached = Boolean(window.apis.youboost.getCachedProxyString());
+        if (ifHasCached) {
+          return this._keepCookedNowAsync(pacMods, cb);
         }
+        return window.apis.youboost.getProxyAsync({ force: true }).then(
+          () => this._keepCookedNowAsync(pacMods, cb),
+          (youErr) => {
+
+            const w = new window.apis.errorsLib.Warning(
+              'YouBoost: ' + (youErr && youErr.message || youErr),
+            );
+            // Continue anyway: the rest of the PAC config is still valid.
+            this._keepCookedNowAsync(pacMods, (err, res, ...warns) =>
+              cb(err, res, ...warns, w),
+            );
+
+          },
+        );
+      }
+
+      return this._keepCookedNowAsync(pacMods, cb);
+
+    },
+
+    /*
+      The actual cooking step. Split out so the YouBoost preparation in
+      keepCookedNowAsync runs once and cannot recurse.
+    */
+    _keepCookedNowAsync(pacMods, cb) {
+
+      let ifProxiesChanged = false;
+      let modsWarns = [];
+      {
         const oldProxies = getCurrentConfigs().filteredCustomsString || '';
         const newProxies = pacMods.filteredCustomsString || '';
         ifProxiesChanged = oldProxies !== newProxies;
@@ -658,6 +758,16 @@ ${
 
     },
 
+    keepCookedNowAsyncPromise(pacMods) {
+
+      return new Promise((resolve, reject) => this.keepCookedNowAsync(
+        pacMods, (err, res, ...warns) => err
+          ? reject(Object.assign(err, {warns}))
+          : resolve({ res, warns }),
+      ));
+
+    },
+
     resetToDefaults() {
 
       kitchenState(modsKey, null);
@@ -666,28 +776,69 @@ ${
 
     },
 
+    resetToDefaultsPromise() {
+
+      return new Promise((resolve, reject) => {
+        kitchenState(modsKey, null);
+        kitchenState(ifIncontinence, null);
+        this.keepCookedNowAsync((err, res, ...warns) => err
+          ? reject(Object.assign(err, {warns}))
+          : resolve({ res, warns }));
+      });
+
+    },
+
   };
 
   const pacKitchen = window.apis.pacKitchen;
 
+  /*
+    The original, unpatched setters. 40-youboost-api.js needs these to install
+    a temporary PAC for outbound API calls without the kitchen wrapper
+    interfering, and to restore the extension's PAC afterwards.
+  */
+  window.utils.proxySetRaw = chrome.proxy.settings.set.bind(chrome.proxy.settings);
+  window.utils.proxyGetRaw = chrome.proxy.settings.get.bind(chrome.proxy.settings);
+
+  /*
+    MV3: chrome.proxy.settings.set() returns a Promise. We wrap it so the
+    PAC script is always cooked before it reaches the browser, and so the
+    shim keeps working for both callback-style and promise-style callers.
+  */
   const originalSet = chrome.proxy.settings.set.bind( chrome.proxy.settings );
 
   chrome.proxy.settings.set = function(details, cb) {
+
     const pac = window.utils.getProp(details, 'value.pacScript');
     if (!(pac && pac.data)) {
-      return originalSet(details, window.utils.timeouted(cb));
+      const p = originalSet(details);
+      if (cb) {
+        p.then(() => window.utils.timeouted(cb)(), (err) => {
+          window.utils.lastError = err;
+          window.utils.timeouted(cb)();
+        });
+        return undefined;
+      }
+      return p;
     }
     const pacMods = getCurrentConfigs();
     pac.data = pacKitchen.cook( pac.data, pacMods );
-    originalSet({value: details.value}, window.utils.chromified((err) => {
-
-      if (!err) {
+    const p = originalSet({value: details.value}).then(
+      () => {
         kitchenState(ifIncontinence, null);
-      }
-      window.utils.lastError = err;
-      cb && cb();
+        window.utils.lastError = undefined;
+        cb && cb();
+      },
+      (err) => {
+        window.utils.lastError = err;
+        cb && cb();
+        if (!cb) {
+          throw err;
+        }
+      },
+    );
+    return cb ? undefined : p;
 
-    }));
   };
 
 } // Private namespace ends.

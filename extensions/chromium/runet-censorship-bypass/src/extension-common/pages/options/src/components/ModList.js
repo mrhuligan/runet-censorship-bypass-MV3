@@ -18,6 +18,20 @@ export default function getModList(theState) {
 
     }
 
+    /*
+      MV3: after a mutation the parent re-fetches the worker snapshot and
+      passes fresh orderedConfigs. Re-sync the local checkbox state so the
+      UI reflects what was actually applied (e.g. when the worker rejects a
+      config and forces a different value).
+    */
+    componentWillReceiveProps(nextProps) {
+
+      this.setState({
+        checks: nextProps.orderedConfigs.map((mod) => Boolean(mod.value)),
+      });
+
+    }
+
     handleCheck(confMeta, ifChecked) {
 
       this.setState({

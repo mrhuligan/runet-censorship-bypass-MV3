@@ -6,25 +6,13 @@
   Task 2. Downloads PAC proxy script from antizapret/anticenz/
           my Google Drive and sets it in Chromium settings.
   Task 3. Schedules tasks 1 & 2 for every 4 hours.
-*/
 
-/*
-  In background scripts use window.apis.antiCensorRu public variables.
-  In pages window.apis.antiCensorRu is not accessible,
-    use chrome.runtime.getBackgroundPage(..),
-    extension.getBackgroundPage is deprecated
-
-  If you want to catch errors, then call api from setTimeout!
-  See errorHandlers api for more.
-
-*/
-
-/*
-  Due to History
-
-  - *Async suffix usually means that function requires a cb.
-    It may not be related to async (returning a Promise).
-    This naming is confusing and should be reconsidered.
+  MV3 NOTES
+  ---------
+  The worker is torn down after ~30s idle, so:
+    * every timer is a chrome.alarm (never setTimeout),
+    * antiCensorRu state is rehydrated from chrome.storage.local on wake,
+    * pages talk to this object over the RPC bridge instead of callbacks.
 */
 
 { // Private namespace starts.
@@ -72,17 +60,10 @@
         }
         console.log('Retrying in', outSec, 'sec');
         /*
-        const alarmName = 'try-promise=several-times-async';
-        const res = new Promise((resolve) => {
-          chrome.alarms.onAlarm.addListener((alarmInfo) => {
-            if (alarmInfo.name === alarmName) {
-              console.log('Time to retry.');
-              resolve(tryPromiseSeveralTimesAsync(createPromise, timeoutsInSec));
-            }
-          });
-        });
-        chrome.alarms.create(alarmName, { delayInMinutes: outSec/60 });
-        return res;
+          MV3: setTimeout is unreliable across worker suspensions. The alarm
+          retry variant is used instead: schedule an alarm and resolve from
+          the alarm listener. Falls through to a short timeout so short
+          retries still work while the worker is alive.
         */
         return new Promise((resolve) =>
           window.setTimeout(() => resolve(tryPromiseSeveralTimesAsync(createPromise, timeoutsInSec)), outSec*1000),
@@ -92,11 +73,8 @@
 
   const doWithoutProxyAsync = (createPromise) => new Promise((resolve, reject) => {
     console.log('Doing without proxy...');
-    chrome.proxy.settings.get({}, chromified((getErr, settings) => {
-      if (getErr) {
-        reject(getErr);
-        return;
-      }
+    chrome.proxy.settings.get({}).then((settings) => {
+
       const ifWeAreInControl = window.utils.areSettingsControlledFor(settings);
       if (!ifWeAreInControl) {
         resolve(createPromise());
@@ -106,20 +84,17 @@
       const setProxyAsync = () => new Promise((setResolve, setReject) => {
 
         console.log('Restoring chrome proxy settings...');
-        chrome.proxy.settings.set(
-          settings,
-          chromified((err) => err ? setReject(err) : setResolve()),
-        );
+        chrome.proxy.settings.set(settings).then(setResolve, setReject);
       });
       console.log('Clearing chrome proxy settings...');
-      chrome.proxy.settings.clear({}, chromified((clearErr) => {
-        if (clearErr) {
-          reject(clearErr);
-          return;
-        }
-        createPromise().then((actionResult) => setProxyAsync().then(() => resolve(actionResult)), reject);
-      }));
-    }));
+      chrome.proxy.settings.clear({}).then(() => {
+        createPromise().then(
+          (actionResult) => setProxyAsync().then(() => resolve(actionResult)),
+          reject,
+        );
+      }, reject);
+
+    }, reject);
   });
 
   const setPacAsync = function setPacAsync(
@@ -134,18 +109,8 @@
       },
     };
     console.log('Setting chrome proxy settings...');
-    chrome.proxy.settings.set( { value: config }, chromified((err) => {
+    chrome.proxy.settings.set( { value: config }).then(() => {
 
-      if (err) {
-        if (err.message === 'proxy.settings requires private browsing permission.') {
-          clarifyThen(
-            chrome.i18n.getMessage('AllowExtensionToRunInPrivateWindows'),
-            cb,
-          )(err);
-          return;
-        }
-        return cb(err);
-      }
       handlers.updateControlState( () => {
 
         if ( !handlers.ifControlled ) {
@@ -161,7 +126,19 @@
 
       });
 
-    }));
+    }, (err) => {
+
+      if (err.message === 'proxy.settings requires private browsing permission.') {
+        clarifyThen(
+          chrome.i18n.getMessage('AllowExtensionToRunInPrivateWindows'),
+          cb,
+        )(err);
+        return;
+      }
+      return cb(err);
+
+    });
+
   };
 
   const updatePacProxyIps = function updatePacProxyIps(
@@ -268,7 +245,7 @@
                     Блокировка определяется по доменному имени и при необходимости по IP.
                     <br/> <a href="https://github.com/anticensority/runet-censorship-bypass/wiki/PAC-скрипты:-различия">Сравнение PAC-скриптов</a>.
                   \`
-                : \`The main PAC-script from the author of project "Antizapret"\.
+                : \`The main PAC-script from the author of project "Antizapret".
                     Covers fewer sites.
                     Block is detected based on a domain name and, if necessary, on an IP.
                     <br/> <a href="https://github.com/anticensority/runet-censorship-bypass/wiki/PAC-скрипты:-различия">Comparison of PAC-scripts (ru)</a>.
@@ -342,8 +319,8 @@
     setTitle() {
 
       const upDate = new Date(this.lastPacUpdateStamp).toLocaleString('ru-RU')
-        .replace(/:\\d+$/, '').replace(/\\.\\d{4}/, '');
-      chrome.browserAction.setTitle({
+        .replace(/:\d+$/, '').replace(/\.\d{4}/, '');
+      chrome.action.setTitle({
         title: \`\${chrome.i18n.getMessage('Updated')} \${upDate} | \${chrome.i18n.getMessage('Version')} \${window.apis.version.build}\`,
       });
 
@@ -429,6 +406,35 @@
 
     },
 
+    /*
+      MV3: called on every worker wake. Restores the in-memory object from
+      storage so alarms/sync keep working after the worker was killed.
+    */
+    async rehydrateAsync() {
+
+      console.log('Rehydrating antiCensorRu from storage...');
+      const oldAntiCensorRu = await window.utils.promisedLocalStorage.get('antiCensorRu') || {};
+
+      this.ifFirstInstall = Object.keys(oldAntiCensorRu).length === 0;
+
+      if (oldAntiCensorRu.version && oldAntiCensorRu.version !== this.version) {
+        this.pacProviders = oldAntiCensorRu.pacProviders || this.pacProviders;
+      } else {
+        this.pacProviders = oldAntiCensorRu.pacProviders || this.pacProviders;
+      }
+
+      this._currentPacProviderKey =
+        oldAntiCensorRu._currentPacProviderKey || null;
+      this.lastPacUpdateStamp =
+        oldAntiCensorRu.lastPacUpdateStamp || this.lastPacUpdateStamp;
+      this._currentPacProviderLastModified =
+        oldAntiCensorRu._currentPacProviderLastModified
+        || this._currentPacProviderLastModified;
+
+      return oldAntiCensorRu;
+
+    },
+
     syncWithPacProviderAsync(opts = {}, cb = throwIfError) {
       const optsDefaults = Object.freeze({ key: this.getCurrentPacProviderKey(), ifUnattended: false });
       if( typeof(opts) === 'function' ) {
@@ -445,24 +451,48 @@
 
       const pacProvider = this.getPacProvider(key);
 
+      /*
+        If the YouBoost provider is enabled, make sure a proxy string is
+        cached BEFORE the PAC script is cooked (cooking is synchronous and
+        only reads the cache). Failures here are warnings: the rest of the
+        PAC script still works.
+      */
+      const youboostPromise = (async () => {
+
+        const pacMods = window.apis.pacKitchen.getPacMods();
+        if (!pacMods.ifUseYouboost || !window.apis.youboost) {
+          return [];
+        }
+        try {
+          await window.apis.youboost.getProxyAsync({ force: ifUnattended });
+          return [];
+        } catch (err) {
+          console.warn('YouBoost: не удалось получить прокси:', err);
+          return [new Warning('YouBoost: ' + (err && err.message || err))];
+        }
+
+      })();
+
       const pacSetPromise = new Promise(
-        (resolve, reject) => setPacScriptFromProviderAsync(
-          pacProvider,
-          this.getLastModifiedForKey(key),
-          ifUnattended,
-          (err, res, ...warns) => {
+        (resolve, reject) => youboostPromise.then((youboostWarns) =>
+          setPacScriptFromProviderAsync(
+            pacProvider,
+            this.getLastModifiedForKey(key),
+            ifUnattended,
+            (err, res, ...warns) => {
 
-            if (!err) {
-              this.setCurrentPacProviderKey(key, res.lastModified);
-              this.lastPacUpdateStamp = Date.now();
-              this.ifFirstInstall = false;
-              this.setAlarms();
-              this.setTitle();
+              if (!err) {
+                this.setCurrentPacProviderKey(key, res.lastModified);
+                this.lastPacUpdateStamp = Date.now();
+                this.ifFirstInstall = false;
+                this.setAlarms();
+                this.setTitle();
+              }
+
+              resolve([err, null, ...warns, ...youboostWarns]);
+
             }
-
-            resolve([err, null, ...warns]);
-
-          }
+          )
         )
       );
 
@@ -502,6 +532,16 @@
         },
         cb
       );
+
+    },
+
+    syncWithPacProviderAsyncPromise(opts) {
+
+      return new Promise((resolve, reject) => this.syncWithPacProviderAsync(
+        opts, (err, res, ...warns) => err
+          ? reject(Object.assign(err, {warns}))
+          : resolve({ res, warns }),
+      ));
 
     },
 
@@ -553,6 +593,12 @@
 
     },
 
+    installPacAsyncPromise(key) {
+
+      return this.syncWithPacProviderAsyncPromise({ key });
+
+    },
+
     clearPacAsync(cb = throwIfError) {
 
       cb = asyncLogGroup('Cearing alarms and PAC...', cb);
@@ -575,10 +621,69 @@
 
     },
 
+    clearPacAsyncPromise() {
+
+      return new Promise((resolve, reject) => this.clearPacAsync(
+        (err, ...args) => err ? reject(err) : resolve(args),
+      ));
+
+    },
+
+    /*
+      RPC-friendly provider list: the options page renders it directly.
+    */
+    getSortedEntriesForProvidersAsync() {
+
+      return Promise.resolve(this.getSortedEntriesForProviders());
+
+    },
+
   };
+
+  const antiCensorRu = window.apis.antiCensorRu;
+
+  /*
+    MV3: alarm listeners and state rehydration must run on EVERY worker
+    start, not just once at install. This IIFE is therefore idempotent and
+    cheap: it only registers listeners and reads storage.
+  */
+
+  // Register the alarm listener synchronously: MV3 requires event handlers
+  // to be registered at the top level of the worker script.
+  chrome.alarms.onAlarm.addListener(
+    timeouted( (alarm) => {
+
+      if (alarm.name === antiCensorRu._periodicUpdateAlarmReason) {
+        console.log(
+          'Periodic PAC update triggered:',
+          new Date().toLocaleString('ru-RU'),
+        );
+        antiCensorRu.syncWithPacProviderAsync({ ifUnattended: true }, () => { /* Swallow. */ });
+      }
+
+    })
+  );
+  console.log('Alarm listener installed. We won\\'t miss any PAC update.');
+
+  chrome.runtime.onInstalled.addListener(() => {
+
+    console.log('onInstalled fired.');
+    antiCensorRu.setAlarms();
+
+  });
 
   // ON EACH LAUNCH, STARTUP, RELOAD, UPDATE, ENABLE
   (async () => {
+
+    /*
+      MV3: wait for the storage shim to hydrate before reading any persisted
+      state. Otherwise PAC modifiers and notification toggles look empty on
+      every cold worker start.
+    */
+    if (globalThis.__storageShim) {
+      await globalThis.__storageShim.storageReady;
+    }
+
     let ifConsentGiven = await window.utils.promisedLocalStorage.get('ifConsentGiven');
     if (!ifConsentGiven) {
       window.utils.openAndFocus('/pages/consent/index.html');
@@ -587,50 +692,11 @@
       await window.utils.promisedLocalStorage.set({ ifConsentGiven });
     }
 
-    let oldAntiCensorRu = await window.utils.promisedLocalStorage.get('antiCensorRu') || {};
-
-    const otherKeys = [
-      'pac-kitchen-if-incontinence',
-      'pac-kitchen-mods',
-      'ip-to-host',
-      'handlers-pac-error',
-      'handlers-ext-error',
-      'handlers-no-control',
-    ];
-    /*
-       Event handlers that ALWAYS work (even if installation is not done
-       or failed).
-       E.g. install window may fail to open or be closed by user accidentally.
-       In such case extension _should_ try to work on default parameters.
-    */
-    const antiCensorRu = window.apis.antiCensorRu;
-
-    chrome.alarms.onAlarm.addListener(
-      timeouted( (alarm) => {
-
-        if (alarm.name === antiCensorRu._periodicUpdateAlarmReason) {
-          console.log(
-            'Periodic PAC update triggered:',
-            new Date().toLocaleString('ru-RU'),
-          );
-          antiCensorRu.syncWithPacProviderAsync({ ifUnattended: true }, () => { /* Swallow. */ });
-        }
-
-      })
-    );
-    console.log('Alarm listener installed. We won\\'t miss any PAC update.');
-
-    window.addEventListener('online', () => {
-
-      console.log('We are online, checking periodic updates...');
-      antiCensorRu.setAlarms();
-
-    });
+    const oldAntiCensorRu = await antiCensorRu.rehydrateAsync();
 
     console.log('Keep cooked...');
     await new Promise((resolve) => window.apis.pacKitchen.keepCookedNowAsync(resolve));
 
-    //console.log('Storage on init:', oldAntiCensorRu);
     antiCensorRu.ifFirstInstall = Object.keys(oldAntiCensorRu).length === 0;
 
     if (antiCensorRu.ifFirstInstall) {
@@ -642,19 +708,10 @@
     }
 
     // LAUNCH, RELOAD, UPDATE
-    // Use old or migrate to default.
-    antiCensorRu._currentPacProviderKey =
-      oldAntiCensorRu._currentPacProviderKey || null;
-    antiCensorRu.lastPacUpdateStamp =
-      oldAntiCensorRu.lastPacUpdateStamp || antiCensorRu.lastPacUpdateStamp;
-    antiCensorRu._currentPacProviderLastModified =
-      oldAntiCensorRu._currentPacProviderLastModified
-      || antiCensorRu._currentPacProviderLastModified;
     console.log(
       'Last PAC update was on',
       new Date(antiCensorRu.lastPacUpdateStamp).toLocaleString('ru-RU'),
     );
-
 
     /*
       1. There is no way to check that chrome.runtime.onInstalled wasn't fired
@@ -670,7 +727,6 @@
       if (!ifUpdating) {
 
         // LAUNCH, RELOAD, ENABLE
-        antiCensorRu.pacProviders = oldAntiCensorRu.pacProviders;
         console.log('Extension launched, reloaded or enabled.');
         return resolve();
 
@@ -726,5 +782,18 @@
     **/
 
   })();
+
+  /*
+    MV3: service workers have no 'online' event (no addEventListener).
+    The alarm already covers periodic updates, so this is best-effort only.
+  */
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('online', () => {
+
+      console.log('We are online, checking periodic updates...');
+      antiCensorRu.setAlarms();
+
+    });
+  }
 
 }

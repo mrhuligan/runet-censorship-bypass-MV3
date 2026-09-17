@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "Runet Censorship Bypass${nameSuffixEn}"
+    "message": "Runet Censorship Bypass MV3${nameSuffixEn}"
   },
   "extDesc": {
-    "message": "Circumvent Russian Internet Censorship: https://git.io/ac-wiki"
+    "message": "Circumvent Russian Internet Censorship. Fork of the anticensority extension, ported to Manifest V3: https://github.com/mrhuligan/runet-censorship-bypass-MV3 | Original: https://github.com/anticensority/runet-censorship-bypass"
   },
   "proxy": {
     "message": "proxy"

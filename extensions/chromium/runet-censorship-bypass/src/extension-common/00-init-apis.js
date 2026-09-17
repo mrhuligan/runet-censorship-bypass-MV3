@@ -11,8 +11,8 @@ console.log('Extension started.');
     // I also don't remove logs for sake of client-side troubleshooting
     // (though no one sent me logs so far).
     ['log', 'warn', 'error'].forEach( (meth) => {
-      const _meth = window.console[meth].bind(console);
-      window.console[meth] = function(...args) {
+      const _meth = console[meth].bind(console);
+      console[meth] = function(...args) {
 
         _meth(...args.map((a) => '' + a));
 
@@ -24,7 +24,52 @@ console.log('Extension started.');
     requestToResponder: {},
   };
 
-  const self = window.utils = {
+  /*
+    MV3: the worker has no `window`. 05-storage-shim.js aliases window to the
+    worker global before this file runs, but we deliberately hang public
+    APIs off `globalThis` to make the intent explicit and to survive the
+    shim being disabled.
+  */
+  /*
+    Kept as a standalone function rather than a method shorthand for clarity.
+    Pages use their own copy in pages/lib/utils-local.js: MV3 CSP forbids
+    eval, so the worker cannot ship this as source text.
+  */
+  const parseProxySchemeImpl = function parseProxyScheme(proxyAsStringRaw) {
+
+    const proxyAsString = proxyAsStringRaw.trim();
+    const [type] = proxyAsString.split(/\s+/);
+    /*
+    if (!/^[a-zA-Z0-9]+$/.test(type)) {
+      throw new Error(`${type} is not a proxy type!`);
+    }
+      JS has no code blocks in RE, seems safe to omit this check.
+    */
+    const typeRe = new RegExp(`^${type}\\s+`, 'g');
+    const crededAddr = proxyAsString.replace(typeRe, '');
+
+    let parts;
+    parts = crededAddr.split('@');
+    let [creds, addr] = [parts.slice(0, -1).join('@'), parts[parts.length - 1]];
+
+    const [hostname, port] = addr.split(':');
+
+    parts = creds.split(':')
+    const username = parts[0];
+    const password = parts.slice(1).join(':');
+
+    return {
+      type,
+      username,
+      password,
+      hostname,
+      port,
+      creds,
+    }
+
+  };
+
+  const self = globalThis.utils = {
 
     mandatory() {
 
@@ -47,7 +92,7 @@ console.log('Extension started.');
 
       // Chrome API calls your cb in a context different from the point of API
       // method invokation.
-      const err = chrome.runtime.lastError || chrome.extension.lastError || self.lastError;
+      const err = chrome.runtime.lastError || self.lastError;
       if (!err) {
         return;
       }
@@ -86,6 +131,36 @@ console.log('Extension started.');
         cb(...args);
 
       });
+
+    },
+
+    /*
+      MV3 proxy.settings.get/set return Promises and no longer take
+      callbacks. These helpers wrap the promise API into the node-style
+      callbacks the rest of the codebase still uses.
+    */
+    promisifiedChrome(methodName, ...args) {
+
+      const fn = window.utils.getProp(chrome, methodName);
+      return Promise.resolve(fn.apply(window.utils.getProp(chrome, methodName.split('.').slice(0, -1).join('.')), args));
+
+    },
+
+    proxyGet(details = {}) {
+
+      return chrome.proxy.settings.get(details);
+
+    },
+
+    proxySet(details) {
+
+      return chrome.proxy.settings.set(details);
+
+    },
+
+    proxyClear(details = {}) {
+
+      return chrome.proxy.settings.clear(details);
 
     },
 
@@ -137,22 +212,40 @@ console.log('Extension started.');
 
     },
 
+    // Promise wrapper over fireRequest, for async call sites.
+    fireRequestPromise(requestType, ...args) {
+
+      return new Promise((resolve, reject) => self.fireRequest(
+        requestType,
+        ...args,
+        (err, res, ...warns) => err
+          ? reject(Object.assign(err, { warns }))
+          : resolve({ res, warns }),
+      ));
+
+    },
+
+    /*
+      Previously backed by window.localStorage. Now backed by
+      05-storage-shim.js (chrome.storage.local). The signature is unchanged
+      so call sites do not care where the data lives.
+    */
     createStorage(prefix) {
 
       return function state(key, value) {
 
         key = prefix + key;
         if (value === null) {
-          return window.localStorage.removeItem(key);
+          return globalThis.localStorage.removeItem(key);
         }
         if (value === undefined) {
-          const item = window.localStorage.getItem(key);
+          const item = globalThis.localStorage.getItem(key);
           return item && JSON.parse(item);
         }
         if (value instanceof Date) {
           throw new TypeError('Converting Date format to JSON is not supported.');
         }
-        window.localStorage.setItem(key, JSON.stringify(value));
+        globalThis.localStorage.setItem(key, JSON.stringify(value));
 
       };
 
@@ -227,39 +320,7 @@ console.log('Extension started.');
 
     },
 
-    parseProxyScheme(proxyAsStringRaw) {
-
-      const proxyAsString = proxyAsStringRaw.trim();
-      const [type] = proxyAsString.split(/\s+/);
-      /*
-      if (!/^[a-zA-Z0-9]+$/.test(type)) {
-        throw new Error(`${type} is not a proxy type!`);
-      }
-        JS has no code blocks in RE, seems safe to omit this check.
-      */
-      const typeRe = new RegExp(`^${type}\\s+`, 'g');
-      const crededAddr = proxyAsString.replace(typeRe, '');
-
-      let parts;
-      parts = crededAddr.split('@');
-      let [creds, addr] = [parts.slice(0, -1).join('@'), parts[parts.length - 1]];
-
-      const [hostname, port] = addr.split(':');
-
-      parts = creds.split(':')
-      const username = parts[0];
-      const password = parts.slice(1).join(':');
-
-      return {
-        type,
-        username,
-        password,
-        hostname,
-        port,
-        creds,
-      }
-
-    },
+    parseProxyScheme: parseProxySchemeImpl,
 
     openAndFocus(url) {
 
@@ -287,7 +348,7 @@ console.log('Extension started.');
     give = resolve;
   });
 
-  window.apis = {
+  globalThis.apis = {
     consent: {
       promise,
       give,

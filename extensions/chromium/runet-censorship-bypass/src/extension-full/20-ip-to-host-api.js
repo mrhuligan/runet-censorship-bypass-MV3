@@ -53,6 +53,12 @@
   const _state = window.utils.createStorage('ip-to-host');
   const ip2host = '';
 
+  /*
+    MV3: the ip->host map lives in chrome.storage.local through the storage
+    shim, so it is rebuilt from storage on every worker wake. reinit() is
+    therefore safe and cheap to call repeatedly.
+  */
+
   const privates = {};
 
   const _createHostObj = function _addHostObj(hostStr) {
@@ -101,9 +107,25 @@
 
   reinit();
 
+  /*
+    MV3: the storage shim hydrates chrome.storage.local into memory
+    asynchronously. On a cold worker start reinit() above may therefore run
+    before persisted IPs are available, so it is re-run once hydration
+    completes.
+  */
+  if (globalThis.__storageShim) {
+    globalThis.__storageShim.storageReady.then(() => {
+
+      console.log('Storage hydrated, re-initialising ip-to-host...');
+      reinit();
+
+    });
+  }
+
   const generateRandomHexString = function generateRandomHexString(minLen, maxLen) {
 
-    return Array.from(window.crypto.getRandomValues(new Uint8Array(maxLen)))
+    // MV3: crypto.getRandomValues is available on the worker global.
+    return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(maxLen)))
       .slice(minLen + Math.floor(Math.random()*(maxLen - minLen)))
       .map((i) => i.toString(16)).join('');
 
@@ -344,6 +366,36 @@
 
       const tmp = privates._ipToHostObj[ip];
       return tmp && tmp.host;
+
+    },
+
+    // RPC-friendly twins.
+    getAsync(ip) {
+
+      return Promise.resolve(this.get(ip));
+
+    },
+
+    updateAllAsyncPromise() {
+
+      return new Promise((resolve, reject) => this.updateAllAsync(
+        (err, ...args) => err ? reject(Object.assign(err, {args})) : resolve(args),
+      ));
+
+    },
+
+    replaceAllAsyncPromise(addrArr) {
+
+      return new Promise((resolve, reject) => this.replaceAllAsync(
+        addrArr,
+        (err, ...args) => err ? reject(Object.assign(err, {args})) : resolve(args),
+      ));
+
+    },
+
+    resetToDefaultsPromise() {
+
+      return Promise.resolve(this.resetToDefaults());
 
     },
 

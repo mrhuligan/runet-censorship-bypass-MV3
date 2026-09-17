@@ -56,14 +56,16 @@ export default function getPacChooser(theState) {
     constructor(props) {
 
       super(props);
-      this.state = {
-        chosenPacName: 'none',
-      };
-
+      /*
+        The selected provider is read from the live worker snapshot, so no
+        local mirror state is needed: after a mutation App calls
+        reloadState() and re-renders, and getCurrentProviderId() below returns
+        the freshly applied key.
+      */
       this.updatePac = function updatePac(onSuccess) {
         props.funs.conduct(
           chrome.i18n.getMessage('UpdatingDDD'),
-          (cb) => theState.apis.antiCensorRu.syncWithPacProviderAsync(cb),
+          () => theState.apis.antiCensorRu.syncWithPacProviderAsyncPromise({}),
           chrome.i18n.getMessage('UpdatedD'),
           onSuccess
         );
@@ -75,7 +77,7 @@ export default function getPacChooser(theState) {
 
     getCurrentProviderId() {
 
-      return theState.apis.antiCensorRu.getCurrentPacProviderKey() || 'none';
+      return theState.state.currentPacProviderKey || 'none';
 
     }
 
@@ -88,31 +90,21 @@ export default function getPacChooser(theState) {
 
     radioClickHandler(event) {
 
-      const checkChosenProvider = () =>
-        this.setState({ chosenPacName: this.getCurrentProviderId() });
-
       const pacKey = event.target.id;
-      if (
-        pacKey === (
-          theState.apis.antiCensorRu.getCurrentPacProviderKey() || 'none'
-        )
-      ) {
+      if (pacKey === this.getCurrentProviderId()) {
         return false;
       }
       if (pacKey === 'none') {
         this.props.funs.conduct(
           chrome.i18n.getMessage('DisablingDDD'),
-          (cb) => theState.apis.antiCensorRu.clearPacAsync(cb),
-          chrome.i18n.getMessage('DisabledD'),
-          () => this.setState({ chosenPacName: 'none' }),
-          checkChosenProvider
+          () => theState.apis.antiCensorRu.clearPacAsyncPromise(),
+          chrome.i18n.getMessage('DisabledD')
         );
       } else {
         this.props.funs.conduct(
           chrome.i18n.getMessage('InstallingDDD'),
-          (cb) => theState.apis.antiCensorRu.installPacAsync(pacKey, cb),
-          chrome.i18n.getMessage('PacScriptWasInstalledD'),
-          checkChosenProvider
+          () => theState.apis.antiCensorRu.installPacAsyncPromise(pacKey),
+          chrome.i18n.getMessage('PacScriptWasInstalledD')
         );
       }
       return false;
@@ -122,12 +114,17 @@ export default function getPacChooser(theState) {
     render(props) {
 
       const iddyToCheck = this.getCurrentProviderId();
+      /*
+        MV3: the provider list ships in the connect-time snapshot (it is
+        static data), so no async fetch is needed during render.
+      */
+      const providers = theState.state.sortedProviders || [];
       return (
         <div>
           {props.flags.ifInsideOptionsPage && (<header>{chrome.i18n.getMessage('PAC_script')}:</header>)}
           <ul>
             {
-              [...theState.apis.antiCensorRu.getSortedEntriesForProviders(), {key: 'none', label: chrome.i18n.getMessage('Disable')}].map((provConf) =>
+              [...providers, {key: 'none', label: chrome.i18n.getMessage('Disable')}].map((provConf) =>
                 (<InfoLi
                   onClick={this.radioClickHandler}
                   conf={provConf}
@@ -159,7 +156,7 @@ export default function getPacChooser(theState) {
 
     componentDidMount() {
 
-      if (theState.apis.antiCensorRu.ifFirstInstall) {
+      if (theState.state.ifFirstInstall) {
         this.updatePac();
       }
 

@@ -10,11 +10,17 @@
   So if you set a title earlier it may be cleared by browser.
   It pertains not only to page refesh but to newly opened pages too.
   Crazy parallel Chrome.
-**/
+*/
 
 {
 
   const chromified = window.utils.chromified;
+
+  /*
+    MV3: chrome.browserAction no longer exists; chrome.action is the modern
+    namespace. The title/badge logic itself is unchanged.
+  */
+  const action = chrome.action;
 
   const _tabCallbacks = {};
 
@@ -41,16 +47,16 @@
 
   const setRedBadge = (opts) => {
 
-    chrome.browserAction.setBadgeBackgroundColor({
+    action.setBadgeBackgroundColor({
       color: '#db4b2f',
     });
-    chrome.browserAction.setBadgeText(opts);
+    action.setBadgeText(opts);
 
   };
 
   const updateTitle = function updateTitle(requestDetails, proxyHost, cb) {
 
-    chrome.browserAction.getTitle(
+    action.getTitle(
       {tabId: requestDetails.tabId},
       chromified((err, title) => {
 
@@ -100,7 +106,7 @@
             ifShouldUpdateTitle = true;
 
             const _cb = cb;
-            cb = () => chrome.browserAction.getBadgeText(
+            cb = () => action.getBadgeText(
               {tabId: requestDetails.tabId},
               (result) => {
 
@@ -119,7 +125,7 @@
         }
 
         if (ifShouldUpdateTitle) {
-          chrome.browserAction.setTitle({
+          action.setTitle({
             title: title,
             tabId: requestDetails.tabId,
           });

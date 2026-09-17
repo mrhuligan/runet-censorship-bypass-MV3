@@ -1,5 +1,27 @@
 # For Reviewers
 
+## Manifest V3 notes
+
+This extension targets Manifest V3. Compared to the old MV2 build:
+
+* The background page is a **service worker** (`background.js`), started by
+  `importScripts()` of the numbered files in `src/extension-common` and the
+  active variant (`extension-full` / `extension-mini`).
+* `05-storage-shim.js` provides a synchronous `localStorage` and a `window`
+  alias backed by `chrome.storage.local`, because workers have neither.
+* `90-rpc-server.js` replaces `chrome.runtime.getBackgroundPage()`: pages use
+  `pages/lib/bg-bridge.js` and talk to the worker over `chrome.runtime`
+  messages. Every former direct call became an async/await RPC call.
+* `chrome.browserAction` is `chrome.action`.
+* `chrome.proxy.settings.*` is promise-based.
+* `webRequestBlocking` is gone. Protected proxies are handled by embedding
+  `user:pass@host:port` into the PAC-returned proxy string (Chromium and
+  Firefox both honour this), instead of answering `onAuthRequired`.
+* Event listeners (`chrome.alarms`, `chrome.webRequest`, `chrome.webNavigation`,
+  `chrome.contextMenus`, `chrome.proxy.settings.onChange`, ...) are registered
+  synchronously at the top level of the worker, as MV3 requires.
+* All timers that must survive worker suspension use `chrome.alarms`.
+
 ## Prerequirements
 
 * You need a globally installed `gulp-cli@3.0.0`.
@@ -20,6 +42,14 @@ npm start
 cd ./build/extension-full
 zip -r runet-censorship-bypass-full.zip ./*
 ```
+
+## Verification tools
+
+`tools/verify-templates.js` renders every template for every build variant and
+parses the result. `tools/smoke-test.js` loads the built worker under a mock
+`chrome` API and checks the main flows (storage shim, PAC cooking, embedded
+proxy credentials, RPC server, listeners). `tools/smoke-test-bridge.js` checks
+the page-side RPC client.
 
 ## Minified Files
 

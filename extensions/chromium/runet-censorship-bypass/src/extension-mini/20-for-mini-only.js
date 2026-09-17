@@ -3,6 +3,7 @@
 {
 
   window.apis.version.ifMini = true;
-  chrome.browserAction.setBadgeText({text: 'M'});
+  // MV3: browserAction -> action.
+  chrome.action.setBadgeText({text: 'M'});
 
 }

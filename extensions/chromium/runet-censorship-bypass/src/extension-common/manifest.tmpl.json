@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
 
   "name": "__MSG_extName__",
   "default_locale": "ru",
@@ -8,51 +8,44 @@
   "icons": {
     "128": "icons/default-128.png"
   },
-  "author": "anticensority+owners@googlegroups.com",
+  "author": "mrhuligan",
+  "homepage_url": "https://github.com/mrhuligan/runet-censorship-bypass-MV3",
 
   "permissions": [
       "proxy"
     , "alarms"
     , "storage"
     , "unlimitedStorage"
-    , "<all_urls>"
     , "tabs"
     , "contextMenus"
     , "notifications"
+    , "webNavigation"
     ${extra_permissions}
   ],
-  "minimum_chrome_version": "55.0.0.0",
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "minimum_chrome_version": "102.0.0.0",
   "browser_specific_settings": {
     "gecko": {
-      "strict_min_version": "91.1.0"
+      "strict_min_version": "109.0"
     }
   },
 
   "background": {
-    ${persistent}
-    "scripts": [
-        "00-init-apis.js"
-      ${scripts_0x}
-      , "11-error-handlers-api.js"
-      , "12-errors-lib.js"
-      , "13-http-lib.js"
-      , "15-firefox-proxy-settings.js"
-      ${scripts_2x}
-      , "35-pac-kitchen-api.js"
-      , "37-sync-pac-script-with-pac-provider-api.js"
-      ${scripts_8x}
-      , "70-menu-items.js"
-      , "75-context-menus.js"
-    ]
+    "service_worker": "background.js"
   },
 
-  "browser_action": {
+  "action": {
     "default_title": "Этот сайт благословлён | Версия ${version + versionSuffix}",
-    "default_popup": "/pages/options/index.html"
+    "default_popup": "/pages/options/index.html",
+    "default_icon": {
+      "128": "icons/default-128.png"
+    }
   },
   "options_ui": {
      "page": "/pages/options/index.html",
-     "chrome_style": false
+     "open_in_tab": true
    }
 
 }

@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "Обход блокировок Рунета${nameSuffixRu}"
+    "message": "Обход блокировок Рунета MV3${nameSuffixRu}"
   },
   "extDesc": {
-    "message": "Обход интернет-цензуры в России: https://git.io/ac-wiki"
+    "message": "Обход интернет-цензуры в России. Форк расширения anticensority, переписанный на Manifest V3: https://github.com/mrhuligan/runet-censorship-bypass-MV3 | Оригинал: https://github.com/anticensority/runet-censorship-bypass"
   },
   "proxy": {
     "message": "прокси"

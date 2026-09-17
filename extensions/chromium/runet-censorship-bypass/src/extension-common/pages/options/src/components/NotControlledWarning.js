@@ -32,8 +32,14 @@ export default function getNotControlledWarning({ flags }) {
 
   return function NotControlledWarning(props) {
 
+    /*
+      MV3: the warning HTML is pre-rendered by the worker and shipped in the
+      connect-time snapshot; calling through the RPC proxy during render is
+      not possible (render is synchronous).
+    */
+    const html = (props.state && props.state.whichExtensionHtml) || '';
     return (
-      <section class={cssClasses.warningContainer + " horPadded"} dangerouslySetInnerHTML={{ __html: props.utils.messages.whichExtensionHtml() }} />
+      <section class={cssClasses.warningContainer + " horPadded"} dangerouslySetInnerHTML={{ __html: html }} />
     );
 
   }

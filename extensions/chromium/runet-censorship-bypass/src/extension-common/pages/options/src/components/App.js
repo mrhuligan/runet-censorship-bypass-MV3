@@ -6,6 +6,12 @@ import getNotControlledWarning from './NotControlledWarning';
 import getMain from './Main';
 import getFooter from './Footer';
 
+/*
+  MV3: all interactions with the worker are async (RPC bridge). `conduct`
+  therefore awaits promise-returning operations and turns rejected promises
+  into the same error-with-warnings shape the UI already renders.
+*/
+
 export default function getApp(theState) {
 
   const NotControlledWarning = getNotControlledWarning(theState);
@@ -32,6 +38,21 @@ export default function getApp(theState) {
       this.conduct = this.conduct.bind(this);
       this.showErrors = this.showErrors.bind(this);
       this.showNews = this.showNews.bind(this);
+      this.reloadState = this.reloadState.bind(this);
+
+    }
+
+    /*
+      MV3: the worker snapshot is a copy taken at connect time. After any
+      mutation the page must re-fetch it; otherwise the UI keeps showing
+      stale values until the popup is reopened.
+    */
+    async reloadState() {
+
+      if (theState.bg && theState.bg.refreshState) {
+        await theState.bg.refreshState();
+        this.forceUpdate();
+      }
 
     }
 
@@ -171,7 +192,7 @@ export default function getApp(theState) {
 
     componentDidMount() {
 
-      if (!this.props.apis.antiCensorRu.ifFirstInstall) {
+      if (!theState.state.ifFirstInstall) {
         this.showNews();
       }
 
@@ -197,6 +218,14 @@ export default function getApp(theState) {
       const warns = args;
 
       const errToHtmlMessage = (error) => {
+
+        /*
+          Warnings arrive from the worker as plain strings (see
+          90-rpc-server.js), while errors are objects. Handle both.
+        */
+        if (typeof error === 'string') {
+          return error;
+        }
 
         let messageHtml = '';
         let wrapped = error.wrapped;
@@ -258,28 +287,55 @@ export default function getApp(theState) {
 
     }
 
-    conduct(
+    async conduct(
       beforeStatus, operation, afterStatus,
       onSuccess = () => {}, onError = () => {}
     ) {
 
       this.setStatusTo(beforeStatus);
       this.switchInputs('off');
-      operation((err, res, ...warns) => {
-        warns = warns.filter( (w) => w );
-        if (err || warns.length) {
-          this.showErrors(err, ...warns);
-        } else {
-          this.setStatusTo(afterStatus);
+
+      /*
+        MV3: `operation` is now either
+          * a callback-style function `(cb) => ...` for legacy call sites, or
+          * an async function returning a promise.
+        Both shapes are supported so components can migrate incrementally.
+      */
+      const result = await new Promise((resolve) => {
+
+        if (operation.length >= 1) {
+          // Callback style.
+          operation((err, res, ...warns) => resolve({ err, res, warns }));
+          return;
         }
-        this.switchInputs('on');
-        if (!err) {
-          onSuccess(res);
-        } else {
-          onError(err);
-        }
+        Promise.resolve().then(operation).then(
+          (res) => resolve({ err: null, res, warns: [] }),
+          (err) => resolve({ err, res: null, warns: err && err.warns || [] }),
+        );
 
       });
+
+      const { err, res } = result;
+      const warns = (result.warns || []).filter((w) => w);
+
+      /*
+        Refresh the snapshot BEFORE reporting, so the UI reflects the new
+        worker state when onSuccess() runs (e.g. PacChooser re-reads the
+        selected provider).
+      */
+      await this.reloadState();
+
+      if (err || warns.length) {
+        this.showErrors(err, ...warns);
+      } else {
+        this.setStatusTo(afterStatus);
+      }
+      this.switchInputs('on');
+      if (!err) {
+        onSuccess(res);
+      } else {
+        onError(err);
+      }
 
     }
 
@@ -291,6 +347,7 @@ export default function getApp(theState) {
           conduct: this.conduct,
           showErrors: this.showErrors,
           showNews: this.showNews,
+          reloadState: this.reloadState,
         },
         ifInputsDisabled: this.state.ifInputsDisabled,
         hashParams: this.state.hashParams,

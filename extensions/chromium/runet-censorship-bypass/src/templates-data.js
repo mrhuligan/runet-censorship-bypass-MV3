@@ -16,15 +16,26 @@ const commonContext = {
 
 exports.contexts = {};
 
-const  extra_permissions = ', "webRequest", "webRequestBlocking", "webNavigation"';
+/*
+  MV3 notes:
+    * webRequestBlocking no longer exists: it must NOT be listed, otherwise
+      the manifest is rejected on install.
+    * webRequest and webNavigation are still valid *permissions* (observers),
+      only the blocking flag is gone. Protected proxies are now handled by
+      embedding credentials into the PAC-returned proxy string instead of
+      blocking onAuthRequired.
+    * `service_worker_type` becomes `"type": "module"` only when the worker
+      is loaded as an ES module. All builds use importScripts(), so it stays
+      empty everywhere.
+*/
+const extra_permissions = ', "webRequest"';
 
 exports.contexts.full = Object.assign({}, commonContext, {
   versionSuffix: '',
   nameSuffixEn: '',
   nameSuffixRu: '',
   extra_permissions,
-  persistent: '',
-  scripts_0x: '',
+  service_worker_type: '',
   scripts_2x: ', "20-ip-to-host-api.js"',
   scripts_8x: ', "80-error-menu.js", "83-last-errors.js", "85-block-informer.js"',
 });
@@ -34,8 +45,7 @@ exports.contexts.mini = Object.assign({}, commonContext, {
   nameSuffixEn: ' MINI',
   nameSuffixRu: ' МИНИ',
   extra_permissions: '',
-  persistent: '"persistent": false,',
-  scripts_0x: '',
+  service_worker_type: '',
   scripts_2x: ', "20-for-mini-only.js"',
   scripts_8x: '',
 });
@@ -44,9 +54,10 @@ exports.contexts.firefox = Object.assign({}, commonContext, {
   versionSuffix: '',
   nameSuffixEn: '',
   nameSuffixRu: '',
+  // Firefox MV3 supports the same permission set here; webRequestBlocking is
+  // absent because the PAC-level auth handling below does not need it.
   extra_permissions,
-  persistent: '',
-  scripts_0x: ', "01-chrome-proxy-settings.js"',
+  service_worker_type: '',
   scripts_2x: ', "20-ip-to-host-api.js"',
   scripts_8x: ', "80-error-menu.js", "83-last-errors.js", "85-block-informer.js"',
 });
@@ -61,8 +72,7 @@ exports.contexts.beta = Object.assign({}, commonContext, {
   nameSuffixEn: ' FOR TESTING',
   nameSuffixRu: ' ДЛЯ ТЕСТОВ',
   extra_permissions,
-  persistent: '',
-  scripts_0x: '',
+  service_worker_type: '',
   scripts_2x: ', "20-ip-to-host-api.js"',
   scripts_8x: ', "80-error-menu.js", "83-last-errors.js", "85-block-informer.js"',
 });

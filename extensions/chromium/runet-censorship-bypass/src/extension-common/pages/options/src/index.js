@@ -6,75 +6,103 @@ import appendGlobalCss from './globalCss';
 import css from 'csjs-inject';
 import getApp from './components/App';
 
-chrome.runtime.getBackgroundPage( (bgWindow) =>
-  bgWindow.apis.errorHandlers.installListenersOn(
-    window, 'PUP', async() => {
-      /*
-        `Extension context invalidated` error is thrown if `window.closed` is true and call to
-        `window.chrome.i18n` or other `window.chrome` api happens. Use bgWindow.chrome instead.
-        Use winChrome for tab-related calls like winChrome.tabs.getCurrent.
-      */
-      window.winChrome = window.chrome;
-      window.chrome = bgWindow.chrome;
-      let theState;
-      {
-        const apis = bgWindow.apis;
+/*
+  MV3: chrome.runtime.getBackgroundPage() no longer exists. The page connects
+  to the service worker through window.bgBridge (loaded from
+  ../lib/bg-bridge.js before this bundle). Everything the app used to read
+  synchronously from the background window now arrives as an async snapshot
+  or via awaitable RPC calls.
 
-        theState = {
-          utils: bgWindow.utils,
-          apis: apis,
-          flags: {
-            /* Shortcuts to boolean values. */
-            ifNotControlled: !apis.errorHandlers.ifControllable,
-            ifMini: apis.version.ifMini,
-          },
-          bgWindow,
-        };
-      }
+  The body lives in an async IIFE because the Babel preset used by this page
+  predates top-level await support.
+*/
 
-      // IF INSIDE OPTIONS TAB
+(async () => {
 
-      const currentTab = await new Promise(
-        (resolve) => winChrome.tabs.query(
-          {active: true, currentWindow: true},
-          ([tab]) => resolve(tab),
-        )
-      );
-      // winChrome.runtime.sendMessage({ currentTab, eventName: 'POPUP_OPENED' });
+  try {
 
-      theState.flags.ifInsideOptionsPage = !(currentTab && currentTab.url) || /.*:\/\/extensions\/\?options=/g.test(currentTab.url) || currentTab.url.startsWith('about:addons');
-      theState.flags.ifInsideEdgeOptionsPage = theState.flags.ifInsideOptionsPage && currentTab && currentTab.url && currentTab.url.startsWith('edge://');
+    const bg = await window.bgBridge.connect();
 
-      theState.currentTab = currentTab;
+    const apis = bg.apis;
 
-      // If opened not via popup and not via options modal.
-      // E.g., if opened via copy-pasting an URL into the address bar from somewhere.
-      // If browser is not Chrome (Opera, e.g.) then options page may be opened in a separate tab
-      // and then you will get a false positive.
-      theState.flags.ifOpenedUnsafely = Boolean(await new Promise(
-        (resolve) => winChrome.tabs.getCurrent(resolve),
-      ));
+    /*
+      Pure helpers needed during render are provided by
+      ../lib/utils-local.js (loaded before this bundle). They cannot be
+      shipped from the worker as source: MV3 CSP forbids eval.
+    */
+    const utils = Object.assign({}, bg.utils, window.utilsLocal);
 
-      // STATE DEFINED, COMPOSE.
+    const theState = {
+      utils: utils,
+      apis,
+      bg,
+      state: bg.state,
+      flags: {
+        /* Shortcuts to boolean values. */
+        ifNotControlled: !bg.state.ifControllable,
+        ifMini: bg.state.ifMini,
+      },
+      // Kept for call sites that only need non-API values (confirm, etc.).
+      bgWindow: {
+        confirm: window.confirm.bind(window),
+        localStorage: window.localStorage,
+      },
+    };
 
-      appendGlobalCss(document, theState);
-      // Extendable css classes.
+    /*
+      bg.refreshState() swaps in a new state object; keep theState.state
+      pointing at it so components see fresh data after mutations.
+    */
+    window.__onBgStateRefreshed = (next) => {
+      theState.state = next;
+    };
 
-      Inferno.render(
-        createElement(getApp(theState), theState),
-        document.getElementById('app-root'),
-      );
-      // READY TO RENDER
+    // IF INSIDE OPTIONS TAB
 
-      const show = () => { document.documentElement.style.visibility = 'initial'; };
+    const currentTab = await new Promise(
+      (resolve) => chrome.tabs.query(
+        {active: true, currentWindow: true},
+        ([tab]) => resolve(tab),
+      )
+    );
 
-      if (theState.flags.ifInsideOptionsPage) {
-        show();
-      } else {
-        setTimeout(show, 200); // Mac bug: https://bugs.chromium.org/p/chromium/issues/detail?id=428044
-      }
+    theState.flags.ifInsideOptionsPage = !(currentTab && currentTab.url) || /.*:\/\/extensions\/\?options=/g.test(currentTab.url) || currentTab.url.startsWith('about:addons');
+    theState.flags.ifInsideEdgeOptionsPage = theState.flags.ifInsideOptionsPage && currentTab && currentTab.url && currentTab.url.startsWith('edge://');
 
+    theState.currentTab = currentTab;
+
+    // If opened not via popup and not via options modal.
+    // E.g., if opened via copy-pasting an URL into the address bar from somewhere.
+    // If browser is not Chrome (Opera, e.g.) then options page may be opened in a separate tab
+    // and then you will get a false positive.
+    theState.flags.ifOpenedUnsafely = Boolean(await new Promise(
+      (resolve) => chrome.tabs.getCurrent(resolve),
+    ));
+
+    // STATE DEFINED, COMPOSE.
+
+    appendGlobalCss(document, theState);
+    // Extendable css classes.
+
+    Inferno.render(
+      createElement(getApp(theState), theState),
+      document.getElementById('app-root'),
+    );
+    // READY TO RENDER
+
+    const show = () => { document.documentElement.style.visibility = 'initial'; };
+
+    if (theState.flags.ifInsideOptionsPage) {
+      show();
+    } else {
+      setTimeout(show, 200); // Mac bug: https://bugs.chromium.org/p/chromium/issues/detail?id=428044
     }
-  )
-);
 
+  } catch (err) {
+
+    console.error('Failed to connect to background:', err);
+    document.documentElement.style.visibility = 'initial';
+
+  }
+
+})();

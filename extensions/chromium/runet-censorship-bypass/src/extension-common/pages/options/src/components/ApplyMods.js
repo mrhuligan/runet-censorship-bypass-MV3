@@ -2,18 +2,22 @@ import Inferno, { linkEvent } from 'inferno';
 
 export default function getApplyMods(theState) {
 
-  const resetMods = function resetMods(props) {
+  /*
+    MV3: the background window is gone. confirm() runs on the page, and the
+    "reset everything" sequence goes through the RPC bridge/worker helpers.
+  */
+  const resetMods = async function resetMods(props) {
 
-    const ifSure = props.bgWindow.confirm('Сбросить все модификаторы и ИСКЛЮЧЕНИЯ?');
+    const ifSure = window.confirm('Сбросить все модификаторы и ИСКЛЮЧЕНИЯ?');
     if (!ifSure) {
       return false;
     }
     props.funs.conduct(
       'Сбрасываем...',
-      (cb) => {
+      async () => {
 
-        props.apis.pacKitchen.resetToDefaults();
-        props.bgWindow.utils.fireRequest('ip-to-host-reset-to-defaults', cb);
+        await props.apis.pacKitchen.resetToDefaultsPromise();
+        await props.bg.call('apis.ipToHost.resetToDefaultsPromise');
         window.localStorage.clear();
 
       },
@@ -34,4 +38,4 @@ export default function getApplyMods(theState) {
 
   };
 
-};
+}

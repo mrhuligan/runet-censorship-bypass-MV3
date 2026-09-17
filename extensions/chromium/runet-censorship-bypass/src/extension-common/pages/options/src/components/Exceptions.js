@@ -23,13 +23,16 @@ export default function getExceptions(theState) {
 
   return function Exceptions(props) {
 
-      const applyMods = (newMods) => {
+      const applyMods = async (newMods) => {
 
-        props.apis.pacKitchen.keepCookedNowAsync(newMods, (err, ...warns) =>
-          err
-            ? props.funs.showErrors(err, ...warns)
-            : props.funs.setStatusTo('Применено.')
-        );
+        try {
+          const { warns } = await props.apis.pacKitchen.keepCookedNowAsyncPromise(newMods);
+          await props.funs.reloadState();
+          (warns || []).filter((w) => w).forEach((w) => props.funs.showErrors(null, w));
+          props.funs.setStatusTo('Применено.');
+        } catch (err) {
+          props.funs.showErrors(err, ...(err.warns || []));
+        }
 
       };
 
@@ -38,12 +41,15 @@ export default function getExceptions(theState) {
         <div class="nowrap">
           Редактор исключений доступен только для <a href="chrome://newtab">вкладок</a>.
         </div>)
-        :
-        (<div>
+        : (<div>
           {createElement(ExcEditor, props)}
           <ul class={scopedCss.excMods}>
             {
-              props.apis.pacKitchen.getOrderedConfigs('exceptions').map((conf) => {
+              /*
+                MV3: ordered configs come from the connect-time snapshot
+                instead of a synchronous call into the worker.
+              */
+              ((props.state.orderedConfigs || {}).exceptions || []).map((conf) => {
 
                 return <InfoLi
                   type="checkbox"
@@ -51,9 +57,9 @@ export default function getExceptions(theState) {
                   idPrefix="mods-"
                   checked={conf.value}
                   disabled={props.ifInputsDisabled}
-                  onClick={(evt) => {
+                  onClick={async (evt) => {
 
-                    const oldMods = props.apis.pacKitchen.getPacMods();
+                    const oldMods = await props.apis.pacKitchen.getPacModsAsync();
                     oldMods[conf.key] = !conf.value;
                     applyMods(oldMods);
 
@@ -71,10 +77,14 @@ export default function getExceptions(theState) {
                     key: 'lookupLastErrors',
                     desc: 'Собирать последние ошибки в запросах, чтобы вручную добавлять избранные из них в исключения.',
                   }}
-                  checked={props.bgWindow.apis.lastNetErrors.ifCollecting}
-                  onChange={(event) => {
+                  checked={props.state.ifCollectingErrors}
+                  onChange={async (event) => {
 
-                    props.bgWindow.apis.lastNetErrors.ifCollecting = event.target.checked;
+                    await props.bg.call(
+                      'apis.lastNetErrors.__setIfCollecting',
+                      event.target.checked,
+                    );
+                    await props.funs.reloadState();
                     props.funs.setStatusTo('Сделано.');
 
                   }}

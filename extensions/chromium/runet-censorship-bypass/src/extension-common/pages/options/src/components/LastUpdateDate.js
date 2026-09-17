@@ -3,13 +3,35 @@ import Component from 'inferno-component';
 
 export default function getLastUpdateDate(theState) {
 
+  /*
+    MV3: the last-update stamp arrives in the connect-time snapshot and is
+    refreshed whenever the worker writes antiCensorRu to chrome.storage.
+    The period is read from the snapshot too (it is a constant in the
+    worker, so it never changes at runtime).
+  */
+  const snapshotState = theState.state || {};
+
   return class LastUpdateDate extends Component {
+
+    constructor(props) {
+
+      super(props);
+      this.state = {
+        lastPacUpdateStamp: snapshotState.lastPacUpdateStamp,
+        pacUpdatePeriodInMinutes: snapshotState.pacUpdatePeriodInMinutes,
+      };
+
+    }
 
     componentWillMount() {
 
       this.onStorageChangedHandler = (changes) => {
         const ac = changes.antiCensorRu;
-        return ac && ac.newValue && ac.newValue.lastPacUpdateStamp && this.forceUpdate();
+        if (ac && ac.newValue && ac.newValue.lastPacUpdateStamp) {
+          this.setState({
+            lastPacUpdateStamp: ac.newValue.lastPacUpdateStamp,
+          });
+        }
       };
 
       chrome.storage.onChanged.addListener( this.onStorageChangedHandler );
@@ -54,7 +76,10 @@ export default function getLastUpdateDate(theState) {
 
     render(props) {
 
-      const date = this.getDate(props.apis.antiCensorRu);
+      const date = this.getDate({
+        lastPacUpdateStamp: this.state.lastPacUpdateStamp,
+        pacUpdatePeriodInMinutes: this.state.pacUpdatePeriodInMinutes,
+      });
       return (<div>{chrome.i18n.getMessage('Updated')}: <span class="updateDate" title={date.title}>{ date.text }</span></div>);
 
     }

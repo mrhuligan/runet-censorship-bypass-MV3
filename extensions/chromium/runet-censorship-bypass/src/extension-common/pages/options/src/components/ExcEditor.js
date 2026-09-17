@@ -82,7 +82,11 @@ export default function getExcEditor(theState) {
           ? '*.' + (new URL(props.currentTab.url).hostname.replace(/^www\./g, ''))
           : '';
 
-      const pacMods = props.apis.pacKitchen.getPacMods();
+      /*
+        MV3: pacMods arrive in the connect-time snapshot, so the editor can
+        render immediately. Live refreshes happen in componentDidMount.
+      */
+      const pacMods = (props.state && props.state.pacMods) || { exceptions: {} };
       this.state = {
         trimmedInputValueOrSpace,
         sortedListOfOptions: this.modsToOpts(pacMods),
@@ -90,6 +94,13 @@ export default function getExcEditor(theState) {
       };
       this.handleRadioClick = this.handleRadioClick.bind(this);
       this.handleInputOrClick = this.handleInputOrClick.bind(this);
+
+    }
+
+    async componentDidMount() {
+
+      const pacMods = await this.props.apis.pacKitchen.getPacModsAsync();
+      this.setState({ sortedListOfOptions: this.modsToOpts(pacMods) });
 
     }
 
@@ -122,13 +133,13 @@ export default function getExcEditor(theState) {
     handleRadioClick(event) {
 
       const host = this.state.trimmedInputValueOrSpace;
-      (() => { // `return` === `preventDefault`.
+      (async () => { // Async IIFE: the bridge is promise-based.
 
         if(!this.isHostValid(host)) {
           return false;
         }
 
-        const pacMods = this.props.apis.pacKitchen.getPacMods();
+        const pacMods = await this.props.apis.pacKitchen.getPacModsAsync();
         pacMods.exceptions = pacMods.exceptions || {};
 
         let ifYesClicked = false;
@@ -156,9 +167,12 @@ export default function getExcEditor(theState) {
 
         this.props.funs.conduct(
           'Применяем исключения...',
-          (cb) => this.props.apis.pacKitchen.keepCookedNowAsync(pacMods, cb),
+          () => this.props.apis.pacKitchen.keepCookedNowAsyncPromise(pacMods),
           'Исключения применены. Не забывайте о кэше!',
-          () => this.setState({sortedListOfOptions: this.modsToOpts(pacMods)})
+          async () => {
+            await this.props.funs.reloadState();
+            this.setState({sortedListOfOptions: this.modsToOpts(pacMods)});
+          }
         );
 
       })();

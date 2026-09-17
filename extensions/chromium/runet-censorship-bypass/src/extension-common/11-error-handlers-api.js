@@ -5,10 +5,17 @@
   const timeouted = window.utils.timeouted;
   const throwIfError = window.utils.throwIfError;
 
+  /*
+    MV3: chrome.browserAction no longer exists. All icon/title/badge calls
+    now go through chrome.action. Centralised here so the rest of the code
+    reads the same as before.
+  */
+  const action = chrome.action;
+
   const errorJsonReplacer = function errorJsonReplacer(key, value) {
 
     // fooWindow.ErrorEvent !== barWindow.ErrorEvent
-    if (value === window) {
+    if (value === globalThis) {
       return; // STUPID, because other window object may be passed.
     }
     if (!( value && value.constructor
@@ -58,6 +65,8 @@
   const extVersion = window.apis.version.build;
 
   window.apis.errorHandlers = {
+
+    action,
 
     state: window.utils.createStorage('handlers-'),
 
@@ -120,10 +129,10 @@
         }
 
         if (this.ifControlled) {
-          chrome.browserAction.setIcon( {path: './icons/default-128.png'} );
+          action.setIcon( {path: {128: '/icons/default-128.png'}} );
         } else {
-          chrome.browserAction.setIcon({
-            path: './icons/default-grayscale-128.png',
+          action.setIcon({
+            path: {128: '/icons/default-grayscale-128.png'},
           });
         }
       }
@@ -143,8 +152,8 @@
 
     updateControlState(cb = throwIfError) {
 
-      chrome.proxy.settings.get(
-        {},
+      // MV3: proxy.settings.get() returns a Promise.
+      chrome.proxy.settings.get({}).then(
         timeouted(
           (details) => {
 
@@ -154,7 +163,8 @@
             cb();
 
           }
-        )
+        ),
+        (err) => cb(err),
       );
 
     },
@@ -182,8 +192,7 @@
           message: message,
           contextMessage: context,
           type: 'basic',
-          iconUrl: './icons/' + icon,
-          appIconMaskUrl: './icons/default-mask-128.png',
+          iconUrl: '/icons/' + icon,
           isClickable: true,
         }, window.apis.platform.ifFirefox ? {} : { requireInteraction: ifSticky }),
       );
@@ -191,6 +200,17 @@
     },
 
     installListenersOn(win, name, cb) {
+
+      /*
+        MV3: service workers have a global scope but NO addEventListener.
+        Pages still use this helper, so the worker call is guarded.
+      */
+      if (!win || typeof win.addEventListener !== 'function') {
+        if (cb) {
+          setTimeout(cb, 0);
+        }
+        return;
+      }
 
       win.addEventListener('error', (errEvent) => {
 
@@ -210,8 +230,7 @@
       });
 
       if (cb) {
-        // In most cases getBackgroundPage( (bg) => installListenersOn
-        // Without setTimeout errors are swallowed, bug #357568
+        // Errors are swallowed without a timeout, bug #357568
         setTimeout(cb, 0);
       }
 
@@ -224,12 +243,12 @@
   // Initialization
   // ==============
 
-  chrome.proxy.settings.get(
-    {},
-    timeouted( handlers.isControllable.bind(handlers) )
+  chrome.proxy.settings.get({}).then(
+    timeouted( handlers.isControllable.bind(handlers) ),
+    (err) => console.warn('Proxy settings read failed:', err),
   );
 
-  chrome.notifications.onClicked.addListener( timeouted( (notId) => {
+  chrome.notifications.onClicked.addListener( (notId) => {
 
     chrome.notifications.clear(notId);
     if(notId === 'no-control') {
@@ -239,41 +258,51 @@
     }
     handlers.viewError(notId);
 
-  }));
+  });
 
-  handlers.installListenersOn(window, 'BG');
+  handlers.installListenersOn(globalThis, 'BG');
 
-  (chrome.proxy.onProxyError || chrome.proxy.onError).addListener( timeouted( (details) => {
+  /*
+    MV3: chrome.proxy.onProxyError is unavailable in some Chromium builds
+    (the event lives in the chrome.proxy namespace only on Firefox and on
+    older Chrome). Guard it.
+  */
+  const onProxyError = chrome.proxy.onProxyError || chrome.proxy.onError;
+  if (onProxyError) {
+    onProxyError.addListener( (details) => {
 
-    if (!handlers.ifControlled) {
-      return;
-    }
-    /*
-      Example:
-        details: "line: 7: Uncaught Error: This is error, man.",
-        error: "net::ERR_PAC_SCRIPT_FAILED",
-        fatal: false,
-    */
-    const ifConFail = [
-      'net::ERR_TUNNEL_CONNECTION_FAILED',
-      'net::ERR_PROXY_CONNECTION_FAILED',
-    ].includes(details.error);
+      if (!handlers.ifControlled) {
+        return;
+      }
+      /*
+        Example:
+          details: "line: 7: Uncaught Error: This is error, man.",
+          error: "net::ERR_PAC_SCRIPT_FAILED",
+          fatal: false,
+      */
+      const ifConFail = [
+        'net::ERR_TUNNEL_CONNECTION_FAILED',
+        'net::ERR_PROXY_CONNECTION_FAILED',
+      ].includes(details.error);
 
-    if (ifConFail) {
-      // Happens if you return neither prixies nor "DIRECT".
-      // Ignore it.
-      return;
-    }
-    console.warn('PAC ERROR', details);
-    // TOOD: add "view pac script at this line" button.
-    handlers.mayNotify('pac-error', 'Ошибка PAC!',
-      (details.error || details.message /* Firefox */) + '\n' + details.details,
-      {icon: 'pac-error-128.png'}
-    );
+      if (ifConFail) {
+        // Happens if you return neither proxys nor "DIRECT".
+        // Ignore it.
+        return;
+      }
+      console.warn('PAC ERROR', details);
+      // TOOD: add "view pac script at this line" button.
+      handlers.mayNotify('pac-error', 'Ошибка PAC!',
+        (details.error || details.message /* Firefox */) + '\n' + details.details,
+        {icon: 'pac-error-128.png'}
+      );
 
-  }));
+    });
+  } else {
+    console.warn('proxy.onProxyError is not available in this browser; PAC errors will not be reported.');
+  }
 
-  chrome.proxy.settings.onChange.addListener( timeouted( (details) => {
+  chrome.proxy.settings.onChange.addListener( (details) => {
 
     console.log('Proxy settings changed:', details.levelOfControl);
     const noCon = 'no-control';
@@ -289,6 +318,6 @@
       chrome.notifications.clear( noCon );
     }
 
-  }));
+  });
 
 }

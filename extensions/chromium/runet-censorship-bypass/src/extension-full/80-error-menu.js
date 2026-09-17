@@ -4,6 +4,13 @@
 
   const timeouted = window.utils.timeouted;
 
+  /*
+    MV3: chrome.browserAction was renamed to chrome.action. Popup/badge/title
+    semantics are identical, but there is no background "window" to reach for
+    it, hence the alias.
+  */
+  const action = chrome.action;
+
   const isProxied = (requestDetails) => false;
   const isProxySideError = (details) =>
     /* About !main_frame: Main frame websocket errors are followed by webnavigation errors
@@ -57,9 +64,9 @@
       : details.tabId;
 
     const [oldPopup, oldText, oldColor] = await new Promise((resolve) =>
-      chrome.browserAction.getPopup({ tabId }, (oldPopup) =>
-        chrome.browserAction.getBadgeText({ tabId }, (oldText) =>
-          chrome.browserAction.getBadgeBackgroundColor({ tabId }, (oldColor) => resolve([
+      action.getPopup({ tabId }, (oldPopup) =>
+        action.getBadgeText({ tabId }, (oldText) =>
+          action.getBadgeBackgroundColor({ tabId }, (oldColor) => resolve([
             oldPopup,
             oldText,
             oldColor,
@@ -74,16 +81,16 @@
     }
     const popup = `${popupPrefix}${urlToA(details.url)}${fromPageHtml}</span>. Это могло быть намеренно или по ошибке.${youMayReportHtml}#tab=exceptions`;
 
-    chrome.browserAction.setPopup({
+    action.setPopup({
       tabId,
       popup,
     });
 
-    chrome.browserAction.setBadgeBackgroundColor({
+    action.setBadgeBackgroundColor({
       tabId,
       color: 'red',
     });
-    chrome.browserAction.setBadgeText({
+    action.setBadgeText({
       tabId,
       text: '❗',
     });
@@ -97,7 +104,7 @@
         clearInterval(timer);
         return;
       }
-      chrome.browserAction.setBadgeText({
+      action.setBadgeText({
         tabId,
         text: ifOnTurn ? '❗' : '',
       }, () => {
@@ -115,9 +122,9 @@
       }
       clearInterval(timer);
 
-      chrome.browserAction.setPopup({ tabId, popup: oldPopup});
-      chrome.browserAction.setBadgeBackgroundColor({ tabId, color: oldColor});
-      chrome.browserAction.setBadgeText({ tabId, text: oldText});
+      action.setPopup({ tabId, popup: oldPopup});
+      action.setBadgeBackgroundColor({ tabId, color: oldColor});
+      action.setBadgeText({ tabId, text: oldText});
 
       chrome.runtime.onMessage.removeListener(restoringHandler);
       chrome.tabs.onRemoved.removeListener(restoringHandler);
@@ -132,7 +139,7 @@
     return true;
   };
 
-  chrome.webNavigation.onErrorOccurred.addListener(timeouted(async (details) => {
+  chrome.webNavigation.onErrorOccurred.addListener(async (details) => {
 
     const tabId = details.tabId;
     if ( !(details.frameId === 0 && tabId >= 0) ||
@@ -146,24 +153,29 @@
       return;
     }
 
-    chrome.browserAction.setPopup({
+    action.setPopup({
       tabId,
       popup: './pages/options/index.html?status=Правый клик по иконке — меню инструментов!#tab=exceptions',
     });
 
-    chrome.browserAction.setBadgeBackgroundColor({
+    action.setBadgeBackgroundColor({
       tabId,
       color: '#4285f4',
     });
-    chrome.browserAction.setBadgeText({
+    action.setBadgeText({
       tabId,
       text: '●●●',
     });
 
-  }));
+  });
 
+  /*
+    MV3: webRequest observers are still allowed without the blocking flag,
+    which is exactly what is needed here. The listener must not return a
+    blocking response.
+  */
   chrome.webRequest.onErrorOccurred.addListener(
-    timeouted(isProxyErrorHandledAsync),
+    (details) => { isProxyErrorHandledAsync(details); },
     {urls: ['<all_urls>']},
   );
 }
