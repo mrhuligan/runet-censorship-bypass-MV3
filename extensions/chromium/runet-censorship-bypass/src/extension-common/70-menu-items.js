@@ -38,8 +38,8 @@
       },
 
       support: {
-        title: 'Документация / Помощь / Поддержка',
-        getUrl: (blockedUrl) => 'https://github.com/anticensority/runet-censorship-bypass/wiki',
+        title: 'Исходный код форка',
+        getUrl: (blockedUrl) => 'https://github.com/mrhuligan/runet-censorship-bypass-MV3',
         order: 99,
       },
 

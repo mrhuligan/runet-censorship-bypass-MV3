@@ -89,8 +89,8 @@
   "Non_critical_error": {
     "message": "Non-critical error. Don't worry: it works"
   },
-  "Donate": {
-    "message": "Donate"
+  "StarOnGithub": {
+    "message": "Star on GitHub"
   },
   "Updated": {
     "message": "Updated"

@@ -89,8 +89,8 @@
   "Non_critical_error": {
     "message": "Некритичная ошибка. Всё хорошо, продолжаем работу"
   },
-  "Donate": {
-    "message": "Поддержать"
+  "StarOnGithub": {
+    "message": "Поставить звёздочку"
   },
   "Updated": {
     "message": "Обновлялись"
