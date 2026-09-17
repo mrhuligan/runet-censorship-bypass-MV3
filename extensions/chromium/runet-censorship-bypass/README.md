@@ -22,6 +22,17 @@ This fork keeps the original feature set and adds a few things:
 * Original: <https://github.com/anticensority/runet-censorship-bypass>
 * This fork only changes the extension code, not the PAC scripts it downloads.
 
+## Install
+
+Готовые сборки — в разделе
+[Releases](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest):
+[full zip](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest/download/runet-censorship-bypass-full.zip)
+и
+[mini zip](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest/download/runet-censorship-bypass-mini.zip).
+
+Распаковать zip и загрузить папку через `chrome://extensions` → «Загрузить
+распакованное расширение».
+
 ## Install (from source)
 
 ```

@@ -15,6 +15,21 @@
   бесплатный доступ на youboost.app, получает прокси типа `vpn` и использует
   его как свои прокси, с возможностью перегенерировать доступ.
 
+## Установка
+
+Готовые сборки — в разделе
+[Releases](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest):
+
+* [Полная версия (runet-censorship-bypass-full.zip)](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest/download/runet-censorship-bypass-full.zip)
+  — проксирование, информер блокировок, сбор ошибок, меню ошибок прокси.
+* [Облегчённая версия (runet-censorship-bypass-mini.zip)](https://github.com/mrhuligan/runet-censorship-bypass-MV3/releases/latest/download/runet-censorship-bypass-mini.zip)
+  — только проксирование.
+
+1. Скачать zip и распаковать в любую папку.
+2. Открыть `chrome://extensions`.
+3. Включить «Режим разработчика».
+4. «Загрузить распакованное расширение» и выбрать папку с `manifest.json`.
+
 ## Оригинал
 
 * Репозиторий: <https://github.com/anticensority/runet-censorship-bypass>
